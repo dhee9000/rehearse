@@ -14,7 +14,9 @@ lines scroll — built for actors prepping a self-tape.
    voices. Your own ElevenLabs library is offered as suggestions when a key is
    present.
 4. **Pick how it runs** — advance on keypress, or advance when you stop
-   speaking (mic silence detection, with an adjustable hold).
+   speaking. Auto mode adds three dials: how long to hold on a stage
+   direction, how long to wait after you stop talking, and a live mic meter
+   for setting the level that counts as talking.
 5. **Render once** — each partner line is rendered to MP3 and cached on disk.
    Changing a voice invalidates only that part's lines.
 6. **Run the scene** — one lit page at a time, your lines under a highlighter,
@@ -65,8 +67,10 @@ src/lib/parse.ts        the breakdown prompt + Claude call + tolerant JSON read
 src/lib/elevenlabs.ts   text-to-speech, voice list, v3 → v2 fallback
 src/lib/db.ts           node:sqlite schema
 src/lib/store.ts        every query the routes need
+src/lib/mic.ts          shared mic plumbing: level curve, thresholds, poll rate
+src/lib/pacing.ts       how long a stage direction stays up
 src/lib/useSilence.ts   mic RMS watcher: waits for speech, then for silence
-src/components/         Intake, Setup, Sides, Teleprompter
+src/components/         Intake, Setup, MicCheck, Sides, Teleprompter
 ```
 
 API routes are thin wrappers over `store.ts`:
@@ -83,6 +87,24 @@ API routes are thin wrappers over `store.ts`:
 Clip rendering is driven from the client with a pool of three, so progress is
 visible per line and a failure only costs that line.
 
+## Mic and pacing
+
+"Advance on silence" needs to know what counts as your voice, and that depends
+on the room. **Your mic** in setup shows a live level meter with a draggable
+line: under it is room noise, over it counts as talking, and the readout uses
+the same words and colours the teleprompter will ("Hearing you", tally red).
+**Take room tone** listens for two seconds and puts the line just above your
+room — the film-set move. If the input is silent it refuses and says so rather
+than setting a line that would treat everything as speech.
+
+Both audio loops poll on `setInterval`, not `requestAnimationFrame`: rAF is
+throttled or paused when a tab isn't frontmost, which would stall silence
+detection mid-scene.
+
+Stage directions aren't spoken, so **Hold on directions** sets how long they
+stay up. Longer directions get proportionally more time, capped at double the
+setting so one wordy paragraph can't stall the scene.
+
 ## Design notes
 
 The palette and type come from the actor's own materials, not a brand: a dark
@@ -91,6 +113,31 @@ on lines you have to speak. Script text is set in Courier Prime — the face
 screenplays are actually written in. Display type is Archivo pushed wide;
 interface type is Instrument Sans. The record-red tally light appears only when
 the mic is live.
+
+## Deploying
+
+Rehearse is built as a local, single-machine tool: SQLite on disk and rendered
+MP3s in a folder next to it. That does not survive a serverless host.
+
+On Vercel the data directory falls back to `/tmp/rehearse`, which is writable
+but **per-instance and wiped on every cold start**. The site will build and the
+landing page will render, but in practice a script you upload can disappear
+before you finish configuring it, and audio rendered by one instance is a 404
+from another. Treat a Vercel deploy as a preview of the interface, not a
+working tool.
+
+To make it actually work when hosted, two things have to move off the
+filesystem:
+
+| Today | Needs to become |
+|---|---|
+| `node:sqlite` file in `data/` (`src/lib/db.ts`) | a hosted Postgres or libSQL/Turso database |
+| MP3s in `data/audio/` (`src/app/api/sessions/[id]/clips/route.ts`, `src/app/api/audio/...`) | object storage — Vercel Blob, S3, or R2 |
+
+Every query is already funnelled through `src/lib/store.ts` and every file
+write through those two routes, so both swaps are contained.
+
+Run it locally (`npm run dev`) and it works exactly as designed.
 
 ## Not in this version
 

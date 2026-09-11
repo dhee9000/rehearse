@@ -2,9 +2,15 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { MicCheck } from "./MicCheck";
 import { Sides } from "./Sides";
 import { Button, ButtonLink, Slate, Wordmark } from "./ui";
 import { STOCK_VOICES } from "@/lib/voices";
+import {
+  directionDwell,
+  DIRECTION_MAX_MS,
+  DIRECTION_MIN_MS,
+} from "@/lib/pacing";
 import type { DialogueMode, ScriptBundle, SessionBundle } from "@/lib/types";
 
 type ClipStatus = "idle" | "pending" | "ready" | "failed";
@@ -210,6 +216,37 @@ function Ready({
   );
   const [rendering, setRendering] = useState(false);
   const [renderError, setRenderError] = useState<string | null>(null);
+  const [threshold, setThreshold] = useState(session.micThreshold);
+  const savedThreshold = useRef(session.micThreshold);
+  const pendingThreshold = useRef<number | null>(null);
+
+  const saveThreshold = useCallback(
+    async (value: number) => {
+      savedThreshold.current = value;
+      pendingThreshold.current = null;
+      await fetch(`/api/sessions/${session.id}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ micThreshold: value }),
+      }).catch(() => undefined);
+    },
+    [session.id],
+  );
+
+  useEffect(() => {
+    if (threshold === savedThreshold.current) return;
+    pendingThreshold.current = threshold;
+    const timer = setTimeout(() => void saveThreshold(threshold), 300);
+    return () => clearTimeout(timer);
+  }, [threshold, saveThreshold]);
+
+  /** Leaving for the scene must not drop a threshold mid-debounce. */
+  const startScene = useCallback(async () => {
+    if (pendingThreshold.current !== null) {
+      await saveThreshold(pendingThreshold.current);
+    }
+    router.push(`/rehearse/${session.id}`);
+  }, [router, saveThreshold, session.id]);
 
   useEffect(() => {
     fetch("/api/voices")
@@ -239,6 +276,25 @@ function Ready({
     },
     [session.id, onSession],
   );
+
+  const voiceOptions = useMemo(() => {
+    const byId = new Map<string, { id: string; name: string }>();
+    for (const v of [...library, ...STOCK_VOICES]) {
+      if (!byId.has(v.id)) byId.set(v.id, { id: v.id, name: v.name });
+    }
+    return [...byId.values()];
+  }, [library]);
+
+  const longestDirection = useMemo(() => {
+    const directions = script.turns.filter(
+      (t) => t.kind === "action" || t.kind === "heading",
+    );
+    if (directions.length === 0) return null;
+    return directions.reduce(
+      (worst, t) => Math.max(worst, directionDwell(t.text, session.directionMs)),
+      0,
+    );
+  }, [script.turns, session.directionMs]);
 
   const partners = useMemo(
     () => script.characters.filter((c) => c.id !== session.userCharacterId),
@@ -386,7 +442,7 @@ function Ready({
             )}
           </div>
           <datalist id="voice-options">
-            {[...library, ...STOCK_VOICES].map((v) => (
+            {voiceOptions.map((v) => (
               <option key={v.id} value={v.id} label={v.name} />
             ))}
           </datalist>
@@ -425,6 +481,35 @@ function Ready({
           {session.mode === "auto" && (
             <label className="mt-5 block">
               <span className="flex items-baseline justify-between">
+                <Slate className="text-muted">Hold on directions</Slate>
+                <span className="script text-[0.8125rem] text-marker">
+                  {(session.directionMs / 1000).toFixed(1)}s
+                </span>
+              </span>
+              <input
+                type="range"
+                min={DIRECTION_MIN_MS}
+                max={DIRECTION_MAX_MS}
+                step={100}
+                value={session.directionMs}
+                onChange={(e) =>
+                  void patch({ directionMs: Number(e.target.value) })
+                }
+                className="mt-2.5 w-full accent-[var(--color-marker)]"
+              />
+              <span className="mt-1.5 block text-[0.75rem] leading-relaxed text-faint">
+                Nobody speaks the stage directions. Longer ones hold a little
+                longer
+                {longestDirection
+                  ? ` — the longest here sits for ${(longestDirection / 1000).toFixed(1)}s.`
+                  : "."}
+              </span>
+            </label>
+          )}
+
+          {session.mode === "auto" && (
+            <label className="mt-5 block">
+              <span className="flex items-baseline justify-between">
                 <Slate className="text-muted">Hold after you stop</Slate>
                 <span className="script text-[0.8125rem] text-marker">
                   {(session.silenceMs / 1000).toFixed(1)}s
@@ -444,6 +529,10 @@ function Ready({
             </label>
           )}
         </section>
+
+        {session.mode === "auto" && (
+          <MicCheck threshold={threshold} onChange={setThreshold} />
+        )}
 
         {/* Render + go */}
         <section className="border-t border-stage-800 pt-7">
@@ -478,7 +567,7 @@ function Ready({
             )}
             <Button
               kind={allReady ? "primary" : "quiet"}
-              onClick={() => router.push(`/rehearse/${session.id}`)}
+              onClick={() => void startScene()}
             >
               {allReady
                 ? "Start the scene"

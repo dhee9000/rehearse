@@ -2,11 +2,16 @@ import { DatabaseSync } from "node:sqlite";
 import fs from "node:fs";
 import path from "node:path";
 
+/* Serverless hosts mount the deployment read-only; /tmp is the only writable
+   path, and it is per-instance and wiped between cold starts. That makes the
+   SQLite file and the rendered audio non-durable there — see README. */
+const DEFAULT_DATA_DIR = process.env.VERCEL ? "/tmp/rehearse" : "data";
+const configured = process.env.DATA_DIR ?? DEFAULT_DATA_DIR;
+
 // Runtime-only path: the build tracer can't resolve it, and shouldn't try.
-export const DATA_DIR = path.join(
-  /* turbopackIgnore: true */ process.cwd(),
-  process.env.DATA_DIR ?? "data",
-);
+export const DATA_DIR = path.isAbsolute(configured)
+  ? configured
+  : path.join(/* turbopackIgnore: true */ process.cwd(), configured);
 export const AUDIO_DIR = path.join(DATA_DIR, "audio");
 
 const SCHEMA = `
@@ -53,6 +58,8 @@ CREATE TABLE IF NOT EXISTS sessions (
   user_character_id TEXT,
   mode              TEXT NOT NULL DEFAULT 'manual',
   silence_ms        INTEGER NOT NULL DEFAULT 1200,
+  mic_threshold     REAL NOT NULL DEFAULT 0.045,
+  direction_ms      INTEGER NOT NULL DEFAULT 1800,
   current_idx       INTEGER NOT NULL DEFAULT 0,
   created_at        INTEGER NOT NULL
 );
@@ -88,8 +95,27 @@ export function db(): DatabaseSync {
   const handle = new DatabaseSync(path.join(DATA_DIR, "rehearse.db"));
   handle.exec("PRAGMA foreign_keys = ON;");
   handle.exec(SCHEMA);
+  migrate(handle);
   globalThis.__rehearseDb = handle;
   return handle;
+}
+
+/** CREATE TABLE IF NOT EXISTS won't add columns to a database that already
+ *  exists, so new settings have to be backfilled by hand. */
+function migrate(handle: DatabaseSync) {
+  const added = [
+    ["sessions", "mic_threshold", "mic_threshold REAL NOT NULL DEFAULT 0.045"],
+    ["sessions", "direction_ms", "direction_ms INTEGER NOT NULL DEFAULT 1800"],
+  ] as const;
+
+  for (const [table, column, ddl] of added) {
+    const columns = handle.prepare(`PRAGMA table_info(${table})`).all() as {
+      name: string;
+    }[];
+    if (!columns.some((c) => c.name === column)) {
+      handle.exec(`ALTER TABLE ${table} ADD COLUMN ${ddl}`);
+    }
+  }
 }
 
 export function id(prefix: string): string {

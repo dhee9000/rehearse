@@ -238,3 +238,47 @@
     scroll-behavior: auto !important;
   }
 }
+
+/* ── Mic threshold: a transparent range input laid over the level meter, so
+      the handle is keyboard-operable while the visible marker is our own. ── */
+.mic-range {
+  -webkit-appearance: none;
+  appearance: none;
+  background: transparent;
+  cursor: ew-resize;
+}
+
+.mic-range::-webkit-slider-runnable-track {
+  height: 100%;
+  background: transparent;
+}
+
+.mic-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 26px;
+  height: 100%;
+  background: transparent;
+  border: none;
+}
+
+.mic-range::-moz-range-track {
+  height: 100%;
+  background: transparent;
+}
+
+.mic-range::-moz-range-thumb {
+  width: 26px;
+  height: 44px;
+  background: transparent;
+  border: none;
+}
+
+.mic-range:focus-visible {
+  outline: none;
+}
+
+.mic-range:focus-visible + .mic-marker {
+  outline: 2px solid var(--color-marker);
+  outline-offset: 2px;
+}

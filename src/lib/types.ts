@@ -43,6 +43,8 @@ export type SessionBundle = {
   id: string;
   mode: DialogueMode;
   silenceMs: number;
+  micThreshold: number;
+  directionMs: number;
   currentIdx: number;
   userCharacterId: string | null;
   voices: Record<string, string>;

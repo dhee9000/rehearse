@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { floorFor, openMic, POLL_MS } from "./mic";
 
 export type MicState = "off" | "asking" | "listening" | "speaking" | "denied";
 
@@ -12,10 +13,12 @@ export type MicState = "off" | "asking" | "listening" | "speaking" | "denied";
 export function useSilence({
   active,
   silenceMs,
+  threshold,
   onSilence,
 }: {
   active: boolean;
   silenceMs: number;
+  threshold: number;
   onSilence: () => void;
 }) {
   const [state, setState] = useState<MicState>("off");
@@ -31,49 +34,42 @@ export function useSilence({
     }
 
     let cancelled = false;
-    let frame = 0;
-    let stream: MediaStream | null = null;
-    let context: AudioContext | null = null;
+    // Deliberately setInterval, not requestAnimationFrame: rAF is throttled or
+    // paused when the tab is occluded or backgrounded, which would stall
+    // silence detection mid-scene and leave the actor waiting forever.
+    let timer: ReturnType<typeof setInterval> | null = null;
+    let mic: Awaited<ReturnType<typeof openMic>> | null = null;
 
-    // Speech has to clear this for a moment before silence means anything.
-    const ONSET = 0.045;
-    const FLOOR = 0.02;
+    const floor = floorFor(threshold);
     let spoke = false;
     let onsetSince = 0;
     let quietSince = 0;
+    let lastPublished = 0;
 
     setState("asking");
 
-    navigator.mediaDevices
-      .getUserMedia({
-        audio: { echoCancellation: true, noiseSuppression: true },
-      })
-      .then((granted) => {
+    openMic()
+      .then((handle) => {
         if (cancelled) {
-          granted.getTracks().forEach((t) => t.stop());
+          handle.close();
           return;
         }
-        stream = granted;
-        context = new AudioContext();
-        const source = context.createMediaStreamSource(granted);
-        const analyser = context.createAnalyser();
-        analyser.fftSize = 1024;
-        analyser.smoothingTimeConstant = 0.7;
-        source.connect(analyser);
-
-        const buffer = new Float32Array(analyser.fftSize);
+        mic = handle;
         setState("listening");
 
         const tick = () => {
           if (cancelled) return;
-          analyser.getFloatTimeDomainData(buffer);
-          let sum = 0;
-          for (let i = 0; i < buffer.length; i++) sum += buffer[i] * buffer[i];
-          const rms = Math.sqrt(sum / buffer.length);
-          setLevel(rms);
-
+          const rms = handle.read();
           const now = performance.now();
-          if (rms > ONSET) {
+
+          // The meter only needs ~12fps; per-frame state would re-render the
+          // whole teleprompter 60 times a second.
+          if (now - lastPublished > 80) {
+            lastPublished = now;
+            setLevel(rms);
+          }
+
+          if (rms > threshold) {
             quietSince = 0;
             if (!onsetSince) onsetSince = now;
             if (!spoke && now - onsetSince > 110) {
@@ -82,22 +78,20 @@ export function useSilence({
             }
           } else {
             onsetSince = 0;
-            if (rms < FLOOR) {
+            if (rms < floor) {
               if (!quietSince) quietSince = now;
               if (spoke && now - quietSince > silenceMs) {
                 spoke = false;
                 quietSince = 0;
                 setState("listening");
                 callback.current();
-                return;
               }
             } else {
               quietSince = 0;
             }
           }
-          frame = requestAnimationFrame(tick);
         };
-        frame = requestAnimationFrame(tick);
+        timer = setInterval(tick, POLL_MS);
       })
       .catch(() => {
         if (!cancelled) setState("denied");
@@ -105,11 +99,10 @@ export function useSilence({
 
     return () => {
       cancelled = true;
-      cancelAnimationFrame(frame);
-      stream?.getTracks().forEach((t) => t.stop());
-      void context?.close();
+      if (timer) clearInterval(timer);
+      mic?.close();
     };
-  }, [active, silenceMs]);
+  }, [active, silenceMs, threshold]);
 
   return { state, level };
 }

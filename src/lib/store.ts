@@ -10,6 +10,8 @@ import type {
 } from "./types";
 import type { ParsedScript } from "./parse";
 import { defaultVoiceFor } from "./voices";
+import { clampThreshold, DEFAULT_THRESHOLD } from "./mic";
+import { clampDirectionMs, DEFAULT_DIRECTION_MS } from "./pacing";
 
 type Row = Record<string, unknown>;
 
@@ -209,10 +211,10 @@ export function ensureSession(scriptId: string): string {
   const sessionId = id("ses");
   db()
     .prepare(
-      `INSERT INTO sessions (id, script_id, user_character_id, mode, silence_ms, current_idx, created_at)
-       VALUES (?, ?, NULL, 'manual', 1200, 0, ?)`,
+      `INSERT INTO sessions (id, script_id, user_character_id, mode, silence_ms, mic_threshold, direction_ms, current_idx, created_at)
+       VALUES (?, ?, NULL, 'manual', 1200, ?, ?, 0, ?)`,
     )
-    .run(sessionId, scriptId, Date.now());
+    .run(sessionId, scriptId, DEFAULT_THRESHOLD, DEFAULT_DIRECTION_MS, Date.now());
 
   const bundle = getScriptBundle(scriptId);
   const setVoiceStmt = db().prepare(
@@ -234,7 +236,7 @@ export function getSessionBundle(sessionId: string): SessionBundle | null {
   const handle = db();
   const session = handle
     .prepare(
-      `SELECT id, script_id, user_character_id, mode, silence_ms, current_idx
+      `SELECT id, script_id, user_character_id, mode, silence_ms, mic_threshold, direction_ms, current_idx
        FROM sessions WHERE id = ?`,
     )
     .get(sessionId) as Row | undefined;
@@ -264,6 +266,8 @@ export function getSessionBundle(sessionId: string): SessionBundle | null {
     id: String(session.id),
     mode: String(session.mode) as DialogueMode,
     silenceMs: num(session.silence_ms),
+    micThreshold: clampThreshold(Number(session.mic_threshold)),
+    directionMs: clampDirectionMs(Number(session.direction_ms)),
     currentIdx: num(session.current_idx),
     userCharacterId: str(session.user_character_id),
     voices,
@@ -278,6 +282,8 @@ export function updateSession(
     userCharacterId?: string | null;
     mode?: DialogueMode;
     silenceMs?: number;
+    micThreshold?: number;
+    directionMs?: number;
     currentIdx?: number;
     voices?: Record<string, string>;
   },
@@ -295,6 +301,16 @@ export function updateSession(
     handle
       .prepare(`UPDATE sessions SET silence_ms = ? WHERE id = ?`)
       .run(Math.max(400, Math.min(5000, patch.silenceMs)), sessionId);
+  }
+  if (patch.micThreshold !== undefined) {
+    handle
+      .prepare(`UPDATE sessions SET mic_threshold = ? WHERE id = ?`)
+      .run(clampThreshold(patch.micThreshold), sessionId);
+  }
+  if (patch.directionMs !== undefined) {
+    handle
+      .prepare(`UPDATE sessions SET direction_ms = ? WHERE id = ?`)
+      .run(clampDirectionMs(patch.directionMs), sessionId);
   }
   if (patch.currentIdx !== undefined) {
     handle

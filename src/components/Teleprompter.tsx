@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useSilence } from "@/lib/useSilence";
+import { meterPercent } from "@/lib/mic";
+import { directionDwell } from "@/lib/pacing";
 import { Button, Slate } from "./ui";
 import type { SessionBundle, Turn } from "@/lib/types";
 
@@ -11,7 +13,8 @@ type Phase = "standby" | "counting" | "running" | "paused" | "done";
 const SIZES = ["text-[1.6rem]", "text-[2.15rem]", "text-[2.9rem]"];
 
 export function Teleprompter({ session }: { session: SessionBundle }) {
-  const { script, mode, silenceMs, userCharacterId } = session;
+  const { script, mode, silenceMs, micThreshold, directionMs, userCharacterId } =
+    session;
   const turns = script.turns;
 
   const nameOf = useMemo(
@@ -80,15 +83,16 @@ export function Teleprompter({ session }: { session: SessionBundle }) {
 
     // Nothing to play. Auto mode reads it and moves on; manual waits for you.
     if (mode === "auto" && role !== "mine") {
-      const timer = setTimeout(advance, readTime(turn.text));
+      const timer = setTimeout(advance, directionDwell(turn.text, directionMs));
       return () => clearTimeout(timer);
     }
-  }, [phase, idx, turn, role, hasClip, mode, advance, session.id]);
+  }, [phase, idx, turn, role, hasClip, mode, directionMs, advance, session.id]);
 
   /* ── the mic, only while it's your line ─────────────────────────────── */
   const mic = useSilence({
     active: phase === "running" && mode === "auto" && role === "mine",
     silenceMs,
+    threshold: micThreshold,
     onSilence: advance,
   });
 
@@ -499,7 +503,7 @@ function Footer({
                 <span className="hidden h-[3px] w-24 overflow-hidden rounded-full bg-stage-700 sm:block">
                   <span
                     className="block h-full bg-tally transition-[width] duration-75"
-                    style={{ width: `${Math.min(100, micLevel * 900)}%` }}
+                    style={{ width: `${meterPercent(micLevel)}%` }}
                   />
                 </span>
               )}
@@ -553,10 +557,4 @@ function Footer({
       </div>
     </footer>
   );
-}
-
-/** Rough time to take in a line of direction, so auto mode doesn't rush it. */
-function readTime(text: string): number {
-  const words = text.trim().split(/\s+/).length;
-  return Math.min(9000, Math.max(1500, words * 330));
 }

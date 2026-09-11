@@ -25,6 +25,8 @@ export async function PATCH(
     userCharacterId?: string | null;
     mode?: DialogueMode;
     silenceMs?: number;
+    micThreshold?: number;
+    directionMs?: number;
     currentIdx?: number;
     voices?: Record<string, string>;
   };
