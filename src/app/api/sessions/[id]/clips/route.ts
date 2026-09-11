@@ -1,8 +1,6 @@
 import { NextResponse } from "next/server";
-import fs from "node:fs/promises";
-import path from "node:path";
-import { AUDIO_DIR } from "@/lib/db";
 import { speak } from "@/lib/elevenlabs";
+import { storage } from "@/lib/storage";
 import {
   getClip,
   getSessionScriptId,
@@ -26,17 +24,17 @@ export async function POST(
     return NextResponse.json({ error: "Missing turnId." }, { status: 400 });
   }
 
-  const scriptId = getSessionScriptId(sessionId);
+  const scriptId = await getSessionScriptId(sessionId);
   if (!scriptId) {
     return NextResponse.json({ error: "No such session." }, { status: 404 });
   }
 
-  const found = getTurnForSpeech(scriptId, turnId);
+  const found = await getTurnForSpeech(scriptId, turnId);
   if (!found?.turn.characterId) {
     return NextResponse.json({ error: "That turn has no speaker." }, { status: 400 });
   }
 
-  const voiceId = getVoiceForCharacter(sessionId, found.turn.characterId);
+  const voiceId = await getVoiceForCharacter(sessionId, found.turn.characterId);
   if (!voiceId) {
     return NextResponse.json(
       { error: "That part has no voice assigned yet." },
@@ -44,14 +42,14 @@ export async function POST(
     );
   }
 
-  const existing = getClip(sessionId, turnId);
+  const existing = await getClip(sessionId, turnId);
   if (existing?.status === "ready" && existing.voiceId === voiceId && existing.file) {
     return NextResponse.json({ turnId, status: "ready" });
   }
 
   if (!process.env.ELEVENLABS_API_KEY) {
     const error = "ELEVENLABS_API_KEY is not set on the server.";
-    saveClip({ sessionId, turnId, voiceId, status: "failed", error });
+    await saveClip({ sessionId, turnId, voiceId, status: "failed", error });
     return NextResponse.json({ turnId, status: "failed", error }, { status: 500 });
   }
 
@@ -63,13 +61,23 @@ export async function POST(
       previousText: found.previous,
       nextText: found.next,
     });
-    const file = `${sessionId}__${turnId}.mp3`;
-    await fs.writeFile(path.join(AUDIO_DIR, file), Buffer.from(audio));
-    saveClip({ sessionId, turnId, voiceId, status: "ready", file });
+    const stored = await (await storage()).put(
+      `${sessionId}__${turnId}.mp3`,
+      Buffer.from(audio),
+      "audio/mpeg",
+    );
+    await saveClip({
+      sessionId,
+      turnId,
+      voiceId,
+      status: "ready",
+      file: stored.key,
+      url: stored.url,
+    });
     return NextResponse.json({ turnId, status: "ready" });
   } catch (err) {
     const error = err instanceof Error ? err.message : "Rendering failed.";
-    saveClip({ sessionId, turnId, voiceId, status: "failed", error });
+    await saveClip({ sessionId, turnId, voiceId, status: "failed", error });
     return NextResponse.json({ turnId, status: "failed", error }, { status: 502 });
   }
 }

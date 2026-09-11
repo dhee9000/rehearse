@@ -16,7 +16,7 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
-  const rawText = getRawText(id);
+  const rawText = await getRawText(id);
   if (!rawText) {
     return NextResponse.json({ error: "No such script." }, { status: 404 });
   }
@@ -27,15 +27,15 @@ export async function POST(
     );
   }
 
-  setParseStatus(id, "parsing");
+  await setParseStatus(id, "parsing");
   try {
     const parsed = await parseScript(rawText);
-    saveBreakdown(id, parsed);
-    const sessionId = ensureSession(id);
-    return NextResponse.json({ script: getScriptBundle(id), sessionId });
+    await saveBreakdown(id, parsed);
+    const sessionId = await ensureSession(id);
+    return NextResponse.json({ script: await getScriptBundle(id), sessionId });
   } catch (err) {
     const error = err instanceof Error ? err.message : "The breakdown failed.";
-    setParseStatus(id, "failed", error);
+    await setParseStatus(id, "failed", error);
     return NextResponse.json({ error }, { status: 502 });
   }
 }

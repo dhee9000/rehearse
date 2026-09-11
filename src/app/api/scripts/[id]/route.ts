@@ -8,10 +8,10 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
-  const script = getScriptBundle(id);
+  const script = await getScriptBundle(id);
   if (!script) {
     return NextResponse.json({ error: "No such script." }, { status: 404 });
   }
-  const sessionId = script.parseStatus === "ready" ? ensureSession(id) : null;
+  const sessionId = script.parseStatus === "ready" ? await ensureSession(id) : null;
   return NextResponse.json({ script, sessionId });
 }

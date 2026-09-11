@@ -9,7 +9,7 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
-  const session = getSessionBundle(id);
+  const session = await getSessionBundle(id);
   if (!session) {
     return NextResponse.json({ error: "No such session." }, { status: 404 });
   }
@@ -31,8 +31,8 @@ export async function PATCH(
     voices?: Record<string, string>;
   };
 
-  updateSession(id, body);
-  const session = getSessionBundle(id);
+  await updateSession(id, body);
+  const session = await getSessionBundle(id);
   if (!session) {
     return NextResponse.json({ error: "No such session." }, { status: 404 });
   }

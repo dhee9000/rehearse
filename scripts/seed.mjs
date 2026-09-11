@@ -3,12 +3,12 @@ import { DatabaseSync } from "node:sqlite";
 import fs from "node:fs";
 import path from "node:path";
 
-const DATA = path.join(process.cwd(), "data");
+const DATA = path.join(process.cwd(), process.env.DATA_DIR ?? "data");
 fs.mkdirSync(path.join(DATA, "audio"), { recursive: true });
 const db = new DatabaseSync(path.join(DATA, "rehearse.db"));
 
-const source = fs.readFileSync("src/lib/db.ts", "utf8");
-db.exec(source.match(/const SCHEMA = `([\s\S]*?)`;/)[1]);
+const source = fs.readFileSync("src/lib/db/schema.ts", "utf8");
+db.exec(source.match(/export const SCHEMA = `([\s\S]*?)`;/)[1]);
 
 const rid = (p) => `${p}_${crypto.randomUUID().replace(/-/g, "").slice(0, 16)}`;
 

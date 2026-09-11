@@ -1,4 +1,4 @@
-import { db, id } from "./db";
+import { db, id, type Driver, type Row } from "./db";
 import type {
   Character,
   ClipState,
@@ -13,57 +13,55 @@ import { defaultVoiceFor } from "./voices";
 import { clampThreshold, DEFAULT_THRESHOLD } from "./mic";
 import { clampDirectionMs, DEFAULT_DIRECTION_MS } from "./pacing";
 
-type Row = Record<string, unknown>;
-
 const str = (v: unknown) => (v == null ? null : String(v));
 const num = (v: unknown) => Number(v ?? 0);
 
-export function createScript(input: {
+export async function createScript(input: {
   title: string;
   sourceName: string;
   sourceKind: string;
   rawText: string;
-}): string {
+}): Promise<string> {
   const scriptId = id("scr");
-  db()
-    .prepare(
-      `INSERT INTO scripts (id, title, source_name, source_kind, raw_text, parse_status, created_at)
-       VALUES (?, ?, ?, ?, ?, 'pending', ?)`,
-    )
-    .run(
+  await (await db()).run(
+    `INSERT INTO scripts (id, title, source_name, source_kind, raw_text, parse_status, created_at)
+     VALUES (?, ?, ?, ?, ?, 'pending', ?)`,
+    [
       scriptId,
       input.title,
       input.sourceName,
       input.sourceKind,
       input.rawText,
       Date.now(),
-    );
+    ],
+  );
   return scriptId;
 }
 
-export function getRawText(scriptId: string): string | null {
-  const row = db()
-    .prepare(`SELECT raw_text FROM scripts WHERE id = ?`)
-    .get(scriptId) as Row | undefined;
+export async function getRawText(scriptId: string): Promise<string | null> {
+  const row = await (await db()).get(
+    `SELECT raw_text FROM scripts WHERE id = ?`,
+    [scriptId],
+  );
   return row ? String(row.raw_text) : null;
 }
 
-export function setParseStatus(
+export async function setParseStatus(
   scriptId: string,
   status: "pending" | "parsing" | "ready" | "failed",
   error?: string | null,
 ) {
-  db()
-    .prepare(`UPDATE scripts SET parse_status = ?, parse_error = ? WHERE id = ?`)
-    .run(status, error ?? null, scriptId);
+  await (await db()).run(
+    `UPDATE scripts SET parse_status = ?, parse_error = ? WHERE id = ?`,
+    [status, error ?? null, scriptId],
+  );
 }
 
-export function saveBreakdown(scriptId: string, parsed: ParsedScript) {
-  const handle = db();
-  handle.exec("BEGIN");
-  try {
-    handle.prepare(`DELETE FROM turns WHERE script_id = ?`).run(scriptId);
-    handle.prepare(`DELETE FROM characters WHERE script_id = ?`).run(scriptId);
+export async function saveBreakdown(scriptId: string, parsed: ParsedScript) {
+  const handle = await db();
+  await handle.transaction(async (tx) => {
+    await tx.run(`DELETE FROM turns WHERE script_id = ?`, [scriptId]);
+    await tx.run(`DELETE FROM characters WHERE script_id = ?`, [scriptId]);
 
     const byName = new Map<string, string>();
     const counts = new Map<string, number>();
@@ -80,72 +78,63 @@ export function saveBreakdown(scriptId: string, parsed: ParsedScript) {
       .filter((c) => c.key.length > 0)
       .sort((a, b) => (counts.get(b.key) ?? 0) - (counts.get(a.key) ?? 0));
 
-    const insertChar = handle.prepare(
-      `INSERT INTO characters (id, script_id, name, ord, line_count, description)
-       VALUES (?, ?, ?, ?, ?, ?)`,
-    );
-    ordered.forEach((c, i) => {
+    for (const [i, c] of ordered.entries()) {
       const charId = id("chr");
       byName.set(c.key, charId);
-      insertChar.run(
-        charId,
-        scriptId,
-        c.key,
-        i,
-        counts.get(c.key) ?? 0,
-        c.description ?? null,
+      await tx.run(
+        `INSERT INTO characters (id, script_id, name, ord, line_count, description)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [charId, scriptId, c.key, i, counts.get(c.key) ?? 0, c.description ?? null],
       );
-    });
+    }
 
-    const insertTurn = handle.prepare(
-      `INSERT INTO turns (id, script_id, idx, kind, character_id, parenthetical, text, tts_text, tts_text_tagged, delivery)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    );
-    parsed.turns.forEach((turn, i) => {
-      const key = turn.character?.trim().toUpperCase();
+    let idx = 0;
+    for (const turn of parsed.turns) {
       const text = turn.text.trim();
-      if (!text) return;
-      insertTurn.run(
-        id("trn"),
-        scriptId,
-        i,
-        turn.kind,
-        (key && byName.get(key)) || null,
-        turn.parenthetical?.trim() || null,
-        text,
-        turn.ttsText?.trim() || (turn.kind === "dialogue" ? text : null),
-        turn.ttsTextTagged?.trim() || null,
-        turn.delivery?.trim() || null,
+      if (!text) continue;
+      const key = turn.character?.trim().toUpperCase();
+      await tx.run(
+        `INSERT INTO turns (id, script_id, idx, kind, character_id, parenthetical, text, tts_text, tts_text_tagged, delivery)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          id("trn"),
+          scriptId,
+          idx++,
+          turn.kind,
+          (key && byName.get(key)) || null,
+          turn.parenthetical?.trim() || null,
+          text,
+          turn.ttsText?.trim() || (turn.kind === "dialogue" ? text : null),
+          turn.ttsTextTagged?.trim() || null,
+          turn.delivery?.trim() || null,
+        ],
       );
-    });
+    }
 
-    handle
-      .prepare(`UPDATE scripts SET title = ?, parse_status = 'ready', parse_error = NULL WHERE id = ?`)
-      .run(parsed.title.trim() || "Untitled", scriptId);
-    handle.exec("COMMIT");
-  } catch (err) {
-    handle.exec("ROLLBACK");
-    throw err;
-  }
+    await tx.run(
+      `UPDATE scripts SET title = ?, parse_status = 'ready', parse_error = NULL WHERE id = ?`,
+      [parsed.title.trim() || "Untitled", scriptId],
+    );
+  });
 }
 
-export function getScriptBundle(scriptId: string): ScriptBundle | null {
-  const handle = db();
-  const script = handle
-    .prepare(
-      `SELECT id, title, source_name, parse_status, parse_error, created_at
-       FROM scripts WHERE id = ?`,
-    )
-    .get(scriptId) as Row | undefined;
+export async function getScriptBundle(
+  scriptId: string,
+): Promise<ScriptBundle | null> {
+  const handle = await db();
+  const script = await handle.get(
+    `SELECT id, title, source_name, parse_status, parse_error, created_at
+     FROM scripts WHERE id = ?`,
+    [scriptId],
+  );
   if (!script) return null;
 
   const characters = (
-    handle
-      .prepare(
-        `SELECT id, name, ord, line_count, description FROM characters
-         WHERE script_id = ? ORDER BY ord`,
-      )
-      .all(scriptId) as Row[]
+    await handle.all(
+      `SELECT id, name, ord, line_count, description FROM characters
+       WHERE script_id = ? ORDER BY ord`,
+      [scriptId],
+    )
   ).map<Character>((r) => ({
     id: String(r.id),
     name: String(r.name),
@@ -155,12 +144,11 @@ export function getScriptBundle(scriptId: string): ScriptBundle | null {
   }));
 
   const turns = (
-    handle
-      .prepare(
-        `SELECT id, idx, kind, character_id, parenthetical, text, delivery
-         FROM turns WHERE script_id = ? ORDER BY idx`,
-      )
-      .all(scriptId) as Row[]
+    await handle.all(
+      `SELECT id, idx, kind, character_id, parenthetical, text, delivery
+       FROM turns WHERE script_id = ? ORDER BY idx`,
+      [scriptId],
+    )
   ).map<Turn>((r) => ({
     id: String(r.id),
     idx: num(r.idx),
@@ -183,16 +171,14 @@ export function getScriptBundle(scriptId: string): ScriptBundle | null {
   };
 }
 
-export function recentScripts(limit = 6) {
-  return (
-    db()
-      .prepare(
-        `SELECT s.id, s.title, s.parse_status, s.created_at,
-                (SELECT COUNT(*) FROM characters c WHERE c.script_id = s.id) AS parts
-         FROM scripts s ORDER BY s.created_at DESC LIMIT ?`,
-      )
-      .all(limit) as Row[]
-  ).map((r) => ({
+export async function recentScripts(limit = 6) {
+  const rows = await (await db()).all(
+    `SELECT s.id, s.title, s.parse_status, s.created_at,
+            (SELECT COUNT(*) FROM characters c WHERE c.script_id = s.id) AS parts
+     FROM scripts s ORDER BY s.created_at DESC LIMIT ?`,
+    [limit],
+  );
+  return rows.map((r) => ({
     id: String(r.id),
     title: String(r.title),
     parseStatus: String(r.parse_status),
@@ -202,60 +188,77 @@ export function recentScripts(limit = 6) {
 }
 
 /** One session per script, reused — the actor is prepping one set of sides. */
-export function ensureSession(scriptId: string): string {
-  const existing = db()
-    .prepare(`SELECT id FROM sessions WHERE script_id = ? ORDER BY created_at DESC LIMIT 1`)
-    .get(scriptId) as Row | undefined;
+export async function ensureSession(scriptId: string): Promise<string> {
+  const handle = await db();
+  const existing = await handle.get(
+    `SELECT id FROM sessions WHERE script_id = ? ORDER BY created_at DESC LIMIT 1`,
+    [scriptId],
+  );
   if (existing) return String(existing.id);
 
   const sessionId = id("ses");
-  db()
-    .prepare(
-      `INSERT INTO sessions (id, script_id, user_character_id, mode, silence_ms, mic_threshold, direction_ms, current_idx, created_at)
-       VALUES (?, ?, NULL, 'manual', 1200, ?, ?, 0, ?)`,
-    )
-    .run(sessionId, scriptId, DEFAULT_THRESHOLD, DEFAULT_DIRECTION_MS, Date.now());
-
-  const bundle = getScriptBundle(scriptId);
-  const setVoiceStmt = db().prepare(
-    `INSERT OR REPLACE INTO session_voices (session_id, character_id, voice_id) VALUES (?, ?, ?)`,
+  await handle.run(
+    `INSERT INTO sessions (id, script_id, user_character_id, mode, silence_ms, mic_threshold, direction_ms, current_idx, created_at)
+     VALUES (?, ?, NULL, 'manual', 1200, ?, ?, 0, ?)`,
+    [sessionId, scriptId, DEFAULT_THRESHOLD, DEFAULT_DIRECTION_MS, Date.now()],
   );
-  bundle?.characters.forEach((c, i) => {
-    setVoiceStmt.run(sessionId, c.id, defaultVoiceFor(i));
-  });
+
+  const bundle = await getScriptBundle(scriptId);
+  for (const [i, c] of (bundle?.characters ?? []).entries()) {
+    await setVoice(handle, sessionId, c.id, defaultVoiceFor(i));
+  }
   // The busiest part is the actor's own until they say otherwise.
   if (bundle?.characters.length) {
-    db()
-      .prepare(`UPDATE sessions SET user_character_id = ? WHERE id = ?`)
-      .run(bundle.characters[0].id, sessionId);
+    await handle.run(`UPDATE sessions SET user_character_id = ? WHERE id = ?`, [
+      bundle.characters[0].id,
+      sessionId,
+    ]);
   }
   return sessionId;
 }
 
-export function getSessionBundle(sessionId: string): SessionBundle | null {
-  const handle = db();
-  const session = handle
-    .prepare(
-      `SELECT id, script_id, user_character_id, mode, silence_ms, mic_threshold, direction_ms, current_idx
-       FROM sessions WHERE id = ?`,
-    )
-    .get(sessionId) as Row | undefined;
+function setVoice(
+  handle: Driver,
+  sessionId: string,
+  characterId: string,
+  voiceId: string,
+) {
+  // Portable upsert — both engines accept ON CONFLICT … DO UPDATE.
+  return handle.run(
+    `INSERT INTO session_voices (session_id, character_id, voice_id)
+     VALUES (?, ?, ?)
+     ON CONFLICT (session_id, character_id) DO UPDATE SET voice_id = excluded.voice_id`,
+    [sessionId, characterId, voiceId],
+  );
+}
+
+export async function getSessionBundle(
+  sessionId: string,
+): Promise<SessionBundle | null> {
+  const handle = await db();
+  const session = await handle.get(
+    `SELECT id, script_id, user_character_id, mode, silence_ms, mic_threshold, direction_ms, current_idx
+     FROM sessions WHERE id = ?`,
+    [sessionId],
+  );
   if (!session) return null;
 
-  const script = getScriptBundle(String(session.script_id));
+  const script = await getScriptBundle(String(session.script_id));
   if (!script) return null;
 
   const voices: Record<string, string> = {};
-  for (const row of handle
-    .prepare(`SELECT character_id, voice_id FROM session_voices WHERE session_id = ?`)
-    .all(sessionId) as Row[]) {
+  for (const row of await handle.all(
+    `SELECT character_id, voice_id FROM session_voices WHERE session_id = ?`,
+    [sessionId],
+  )) {
     voices[String(row.character_id)] = String(row.voice_id);
   }
 
   const clips = (
-    handle
-      .prepare(`SELECT turn_id, status, error FROM clips WHERE session_id = ?`)
-      .all(sessionId) as Row[]
+    await handle.all(
+      `SELECT turn_id, status, error FROM clips WHERE session_id = ?`,
+      [sessionId],
+    )
   ).map<ClipState>((r) => ({
     turnId: String(r.turn_id),
     status: String(r.status) as ClipState["status"],
@@ -276,7 +279,7 @@ export function getSessionBundle(sessionId: string): SessionBundle | null {
   };
 }
 
-export function updateSession(
+export async function updateSession(
   sessionId: string,
   patch: {
     userCharacterId?: string | null;
@@ -288,53 +291,57 @@ export function updateSession(
     voices?: Record<string, string>;
   },
 ) {
-  const handle = db();
+  const handle = await db();
   if (patch.userCharacterId !== undefined) {
-    handle
-      .prepare(`UPDATE sessions SET user_character_id = ? WHERE id = ?`)
-      .run(patch.userCharacterId, sessionId);
+    await handle.run(`UPDATE sessions SET user_character_id = ? WHERE id = ?`, [
+      patch.userCharacterId,
+      sessionId,
+    ]);
   }
   if (patch.mode) {
-    handle.prepare(`UPDATE sessions SET mode = ? WHERE id = ?`).run(patch.mode, sessionId);
+    await handle.run(`UPDATE sessions SET mode = ? WHERE id = ?`, [
+      patch.mode,
+      sessionId,
+    ]);
   }
   if (patch.silenceMs !== undefined) {
-    handle
-      .prepare(`UPDATE sessions SET silence_ms = ? WHERE id = ?`)
-      .run(Math.max(400, Math.min(5000, patch.silenceMs)), sessionId);
+    await handle.run(`UPDATE sessions SET silence_ms = ? WHERE id = ?`, [
+      Math.max(400, Math.min(5000, patch.silenceMs)),
+      sessionId,
+    ]);
   }
   if (patch.micThreshold !== undefined) {
-    handle
-      .prepare(`UPDATE sessions SET mic_threshold = ? WHERE id = ?`)
-      .run(clampThreshold(patch.micThreshold), sessionId);
+    await handle.run(`UPDATE sessions SET mic_threshold = ? WHERE id = ?`, [
+      clampThreshold(patch.micThreshold),
+      sessionId,
+    ]);
   }
   if (patch.directionMs !== undefined) {
-    handle
-      .prepare(`UPDATE sessions SET direction_ms = ? WHERE id = ?`)
-      .run(clampDirectionMs(patch.directionMs), sessionId);
+    await handle.run(`UPDATE sessions SET direction_ms = ? WHERE id = ?`, [
+      clampDirectionMs(patch.directionMs),
+      sessionId,
+    ]);
   }
   if (patch.currentIdx !== undefined) {
-    handle
-      .prepare(`UPDATE sessions SET current_idx = ? WHERE id = ?`)
-      .run(patch.currentIdx, sessionId);
+    await handle.run(`UPDATE sessions SET current_idx = ? WHERE id = ?`, [
+      patch.currentIdx,
+      sessionId,
+    ]);
   }
   if (patch.voices) {
-    const stmt = handle.prepare(
-      `INSERT OR REPLACE INTO session_voices (session_id, character_id, voice_id) VALUES (?, ?, ?)`,
-    );
-    const clearClips = handle.prepare(
-      `DELETE FROM clips WHERE session_id = ? AND turn_id IN
-         (SELECT id FROM turns WHERE character_id = ?)`,
-    );
     for (const [characterId, voiceId] of Object.entries(patch.voices)) {
-      const current = handle
-        .prepare(
-          `SELECT voice_id FROM session_voices WHERE session_id = ? AND character_id = ?`,
-        )
-        .get(sessionId, characterId) as Row | undefined;
+      const current = await handle.get(
+        `SELECT voice_id FROM session_voices WHERE session_id = ? AND character_id = ?`,
+        [sessionId, characterId],
+      );
       if (current && String(current.voice_id) === voiceId) continue;
-      stmt.run(sessionId, characterId, voiceId);
+      await setVoice(handle, sessionId, characterId, voiceId);
       // A new voice invalidates every line already rendered for that part.
-      clearClips.run(sessionId, characterId);
+      await handle.run(
+        `DELETE FROM clips WHERE session_id = ? AND turn_id IN
+           (SELECT id FROM turns WHERE character_id = ?)`,
+        [sessionId, characterId],
+      );
     }
   }
 }
@@ -348,25 +355,25 @@ export type TurnForSpeech = {
   text: string;
 };
 
-export function getTurnForSpeech(
+export async function getTurnForSpeech(
   scriptId: string,
   turnId: string,
-): { turn: TurnForSpeech; previous: string | null; next: string | null } | null {
-  const handle = db();
-  const row = handle
-    .prepare(
-      `SELECT id, idx, character_id, tts_text, tts_text_tagged, text
-       FROM turns WHERE id = ? AND script_id = ?`,
-    )
-    .get(turnId, scriptId) as Row | undefined;
+): Promise<
+  { turn: TurnForSpeech; previous: string | null; next: string | null } | null
+> {
+  const handle = await db();
+  const row = await handle.get(
+    `SELECT id, idx, character_id, tts_text, tts_text_tagged, text
+     FROM turns WHERE id = ? AND script_id = ?`,
+    [turnId, scriptId],
+  );
   if (!row) return null;
 
-  const neighbour = (offset: number) => {
-    const n = handle
-      .prepare(
-        `SELECT tts_text, text, kind FROM turns WHERE script_id = ? AND idx = ?`,
-      )
-      .get(scriptId, num(row.idx) + offset) as Row | undefined;
+  const neighbour = async (offset: number) => {
+    const n = await handle.get(
+      `SELECT tts_text, text, kind FROM turns WHERE script_id = ? AND idx = ?`,
+      [scriptId, num(row.idx) + offset],
+    );
     if (!n || String(n.kind) !== "dialogue") return null;
     return String(n.tts_text ?? n.text);
   };
@@ -380,73 +387,78 @@ export function getTurnForSpeech(
       ttsTextTagged: str(row.tts_text_tagged),
       text: String(row.text),
     },
-    previous: neighbour(-1),
-    next: neighbour(1),
+    previous: await neighbour(-1),
+    next: await neighbour(1),
   };
 }
 
-export function getClip(sessionId: string, turnId: string) {
-  const row = db()
-    .prepare(
-      `SELECT id, status, file, error, voice_id FROM clips WHERE session_id = ? AND turn_id = ?`,
-    )
-    .get(sessionId, turnId) as Row | undefined;
+export async function getClip(sessionId: string, turnId: string) {
+  const row: Row | undefined = await (await db()).get(
+    `SELECT id, status, file, url, error, voice_id FROM clips
+     WHERE session_id = ? AND turn_id = ?`,
+    [sessionId, turnId],
+  );
   if (!row) return null;
   return {
     id: String(row.id),
     status: String(row.status) as ClipState["status"],
     file: str(row.file),
+    url: str(row.url),
     error: str(row.error),
     voiceId: String(row.voice_id),
   };
 }
 
-export function saveClip(input: {
+export async function saveClip(input: {
   sessionId: string;
   turnId: string;
   voiceId: string;
   status: ClipState["status"];
   file?: string | null;
+  url?: string | null;
   error?: string | null;
 }) {
-  db()
-    .prepare(
-      `INSERT INTO clips (id, session_id, turn_id, voice_id, status, file, error, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-       ON CONFLICT (session_id, turn_id) DO UPDATE SET
-         voice_id = excluded.voice_id,
-         status = excluded.status,
-         file = excluded.file,
-         error = excluded.error,
-         created_at = excluded.created_at`,
-    )
-    .run(
+  await (await db()).run(
+    `INSERT INTO clips (id, session_id, turn_id, voice_id, status, file, url, error, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT (session_id, turn_id) DO UPDATE SET
+       voice_id = excluded.voice_id,
+       status = excluded.status,
+       file = excluded.file,
+       url = excluded.url,
+       error = excluded.error,
+       created_at = excluded.created_at`,
+    [
       id("clp"),
       input.sessionId,
       input.turnId,
       input.voiceId,
       input.status,
       input.file ?? null,
+      input.url ?? null,
       input.error ?? null,
       Date.now(),
-    );
+    ],
+  );
 }
 
-export function getVoiceForCharacter(
+export async function getVoiceForCharacter(
   sessionId: string,
   characterId: string,
-): string | null {
-  const row = db()
-    .prepare(
-      `SELECT voice_id FROM session_voices WHERE session_id = ? AND character_id = ?`,
-    )
-    .get(sessionId, characterId) as Row | undefined;
+): Promise<string | null> {
+  const row = await (await db()).get(
+    `SELECT voice_id FROM session_voices WHERE session_id = ? AND character_id = ?`,
+    [sessionId, characterId],
+  );
   return row ? String(row.voice_id) : null;
 }
 
-export function getSessionScriptId(sessionId: string): string | null {
-  const row = db()
-    .prepare(`SELECT script_id FROM sessions WHERE id = ?`)
-    .get(sessionId) as Row | undefined;
+export async function getSessionScriptId(
+  sessionId: string,
+): Promise<string | null> {
+  const row = await (await db()).get(
+    `SELECT script_id FROM sessions WHERE id = ?`,
+    [sessionId],
+  );
   return row ? String(row.script_id) : null;
 }

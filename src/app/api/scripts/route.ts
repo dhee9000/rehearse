@@ -40,7 +40,7 @@ export async function POST(request: Request) {
       );
     }
 
-    const id = createScript({
+    const id = await createScript({
       title: guessTitle(text, sourceName.replace(/\.[^.]+$/, "")),
       sourceName,
       sourceKind,

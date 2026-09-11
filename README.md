@@ -114,30 +114,44 @@ screenplays are actually written in. Display type is Archivo pushed wide;
 interface type is Instrument Sans. The record-red tally light appears only when
 the mic is live.
 
+## Storage modes
+
+The database and the audio store are each behind an interface, chosen from the
+environment at startup. Every combination works:
+
+| `DATABASE_URL` | `BLOB_READ_WRITE_TOKEN` | Mode |
+|---|---|---|
+| unset | unset | **SQLite + filesystem** — the default, for running on your own machine |
+| set | unset | **Postgres + filesystem** — shared database, local audio |
+| set | set | **Postgres + Blob** — the only combination that works on a serverless host |
+
+```
+src/lib/db/driver.ts     the interface: all/get/run/exec/transaction/columns
+src/lib/db/sqlite.ts     node:sqlite
+src/lib/db/postgres.ts   pg
+src/lib/db/schema.ts     one schema, valid in both dialects
+src/lib/storage/fs.ts    audio on disk
+src/lib/storage/blob.ts  audio in Vercel Blob
+```
+
+Queries are written once in a portable SQL subset with `?` placeholders; the
+Postgres driver rewrites them to `$1, $2, …`. Types are picked to be valid in
+both engines — `BIGINT` for millisecond timestamps, because they overflow
+Postgres's 4-byte `INTEGER`, and `DOUBLE PRECISION` for the mic threshold.
+Upserts use `ON CONFLICT … DO UPDATE`, which both accept.
+
+Vercel Postgres is Neon underneath: a standard `postgres://` string that plain
+`pg` handles with nothing custom. Use the pooled endpoint.
+
 ## Deploying
 
-Rehearse is built as a local, single-machine tool: SQLite on disk and rendered
-MP3s in a folder next to it. That does not survive a serverless host.
+A serverless host mounts the deployment read-only and gives each instance its
+own ephemeral `/tmp`, so **SQLite + filesystem cannot work there** — a script
+you upload is gone by the next request. Set both `DATABASE_URL` and
+`BLOB_READ_WRITE_TOKEN` and it works properly.
 
-On Vercel the data directory falls back to `/tmp/rehearse`, which is writable
-but **per-instance and wiped on every cold start**. The site will build and the
-landing page will render, but in practice a script you upload can disappear
-before you finish configuring it, and audio rendered by one instance is a 404
-from another. Treat a Vercel deploy as a preview of the interface, not a
-working tool.
-
-To make it actually work when hosted, two things have to move off the
-filesystem:
-
-| Today | Needs to become |
-|---|---|
-| `node:sqlite` file in `data/` (`src/lib/db.ts`) | a hosted Postgres or libSQL/Turso database |
-| MP3s in `data/audio/` (`src/app/api/sessions/[id]/clips/route.ts`, `src/app/api/audio/...`) | object storage — Vercel Blob, S3, or R2 |
-
-Every query is already funnelled through `src/lib/store.ts` and every file
-write through those two routes, so both swaps are contained.
-
-Run it locally (`npm run dev`) and it works exactly as designed.
+With neither set, a Vercel deploy still builds and the interface renders, but
+treat it as a preview only.
 
 ## Not in this version
 

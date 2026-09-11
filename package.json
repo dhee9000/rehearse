@@ -12,9 +12,11 @@
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^4.0.53",
+    "@vercel/blob": "^2.8.0",
     "ai": "^7.0.98",
     "mammoth": "^1.12.2",
     "next": "^16.3.5",
+    "pg": "^8.23.0",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
     "unpdf": "^1.8.1",
@@ -23,6 +25,7 @@
   "devDependencies": {
     "@tailwindcss/postcss": "^4.3.3",
     "@types/node": "^22.20.2",
+    "@types/pg": "^8.23.1",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "tailwindcss": "^4.3.3",

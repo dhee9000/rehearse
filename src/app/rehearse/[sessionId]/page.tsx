@@ -10,7 +10,7 @@ export default async function RehearsePage({
   params: Promise<{ sessionId: string }>;
 }) {
   const { sessionId } = await params;
-  const session = getSessionBundle(sessionId);
+  const session = await getSessionBundle(sessionId);
   if (!session) notFound();
   return <Teleprompter session={session} />;
 }

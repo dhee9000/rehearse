@@ -14,8 +14,8 @@ const SPECIMEN = [
   { who: "DEV", line: "I brought a pen.", mine: false },
 ];
 
-export default function Home() {
-  const recents = recentScripts();
+export default async function Home() {
+  const recents = await recentScripts();
 
   return (
     <main className="grain relative min-h-dvh overflow-hidden">

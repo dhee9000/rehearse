@@ -10,11 +10,13 @@ export default async function ScriptPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const script = getScriptBundle(id);
+  const script = await getScriptBundle(id);
   if (!script) notFound();
 
   const session =
-    script.parseStatus === "ready" ? getSessionBundle(ensureSession(id)) : null;
+    script.parseStatus === "ready"
+      ? await getSessionBundle(await ensureSession(id))
+      : null;
 
   return <Setup initialScript={script} initialSession={session} />;
 }
