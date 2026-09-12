@@ -14,8 +14,16 @@ export interface Storage {
 
 export type StorageMode = "fs" | "blob";
 
+/**
+ * Blob when the project is wired to a store. Vercel's newer OIDC credential
+ * mode injects BLOB_STORE_ID and no static token — the SDK authenticates from
+ * the runtime's OIDC identity — while a static BLOB_READ_WRITE_TOKEN is what
+ * you get for local or non-Vercel use. Either one means "use Blob".
+ */
 export function storageMode(): StorageMode {
-  return process.env.BLOB_READ_WRITE_TOKEN ? "blob" : "fs";
+  return process.env.BLOB_READ_WRITE_TOKEN || process.env.BLOB_STORE_ID
+    ? "blob"
+    : "fs";
 }
 
 declare global {
