@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
-import { getClip } from "@/lib/store";
+import { getClip, ownedSessionScriptId } from "@/lib/store";
 import { storage } from "@/lib/storage";
+import { currentUserId } from "@/lib/session-user";
 
 export const runtime = "nodejs";
 
@@ -9,6 +10,14 @@ export async function GET(
   { params }: { params: Promise<{ sessionId: string; turnId: string }> },
 ) {
   const { sessionId, turnId } = await params;
+  const userId = await currentUserId();
+  if (!userId) {
+    return NextResponse.json({ error: "Sign in first." }, { status: 401 });
+  }
+  if (!(await ownedSessionScriptId(sessionId, userId))) {
+    return NextResponse.json({ error: "Not rendered yet." }, { status: 404 });
+  }
+
   const clip = await getClip(sessionId, turnId);
   if (!clip || clip.status !== "ready" || !clip.file) {
     return NextResponse.json({ error: "Not rendered yet." }, { status: 404 });

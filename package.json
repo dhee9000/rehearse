@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^4.0.53",
+    "@clerk/nextjs": "^7.9.2",
     "@vercel/blob": "^2.8.0",
     "ai": "^7.0.98",
     "mammoth": "^1.12.2",

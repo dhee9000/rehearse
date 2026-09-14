@@ -7,6 +7,7 @@
 export const SCHEMA = `
 CREATE TABLE IF NOT EXISTS scripts (
   id           TEXT PRIMARY KEY,
+  user_id      TEXT,
   title        TEXT NOT NULL,
   source_name  TEXT NOT NULL,
   source_kind  TEXT NOT NULL,
@@ -86,4 +87,8 @@ export const ADDED_COLUMNS: ReadonlyArray<
   ["sessions", "mic_threshold", "mic_threshold DOUBLE PRECISION NOT NULL DEFAULT 0.045"],
   ["sessions", "direction_ms", "direction_ms INTEGER NOT NULL DEFAULT 1800"],
   ["clips", "url", "url TEXT"],
+  // Everything else hangs off a script, so ownership is recorded once here.
+  // Rows predating auth keep NULL and belong to nobody — deliberately, since
+  // handing them to whoever signs in first would be the wrong default.
+  ["scripts", "user_id", "user_id TEXT"],
 ];

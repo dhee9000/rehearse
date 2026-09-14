@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server";
 import { speak } from "@/lib/elevenlabs";
 import { storage } from "@/lib/storage";
+import { currentUserId } from "@/lib/session-user";
 import {
   getClip,
-  getSessionScriptId,
+  ownedSessionScriptId,
   getTurnForSpeech,
   getVoiceForCharacter,
   saveClip,
@@ -19,12 +20,17 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id: sessionId } = await params;
+  const userId = await currentUserId();
+  if (!userId) {
+    return NextResponse.json({ error: "Sign in first." }, { status: 401 });
+  }
   const { turnId } = (await request.json()) as { turnId?: string };
   if (!turnId) {
     return NextResponse.json({ error: "Missing turnId." }, { status: 400 });
   }
 
-  const scriptId = await getSessionScriptId(sessionId);
+  // Ownership resolves the script id, so an unowned session can't render.
+  const scriptId = await ownedSessionScriptId(sessionId, userId);
   if (!scriptId) {
     return NextResponse.json({ error: "No such session." }, { status: 404 });
   }

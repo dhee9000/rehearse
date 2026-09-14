@@ -1,11 +1,16 @@
 import { NextResponse } from "next/server";
 import { extractText, guessTitle } from "@/lib/extract";
 import { createScript } from "@/lib/store";
+import { currentUserId } from "@/lib/session-user";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
 export async function POST(request: Request) {
+  const userId = await currentUserId();
+  if (!userId) {
+    return NextResponse.json({ error: "Sign in first." }, { status: 401 });
+  }
   try {
     const contentType = request.headers.get("content-type") ?? "";
     let text = "";
@@ -41,6 +46,7 @@ export async function POST(request: Request) {
     }
 
     const id = await createScript({
+      userId,
       title: guessTitle(text, sourceName.replace(/\.[^.]+$/, "")),
       sourceName,
       sourceKind,

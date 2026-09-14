@@ -114,6 +114,33 @@ screenplays are actually written in. Display type is Archivo pushed wide;
 interface type is Instrument Sans. The record-red tally light appears only when
 the mic is live.
 
+## Accounts
+
+Auth is Clerk. The landing page is public — it's the pitch — and everything
+else is private. Enforcement lives next to the data, not in path matching:
+every API route resolves the signed-in user and checks the owning row, and the
+two protected pages redirect to sign-in when anonymous and 404 when the id
+belongs to someone else, so another person's script id is indistinguishable
+from one that doesn't exist.
+
+`scripts.user_id` is the only ownership column. Sessions, characters, turns and
+clips all hang off a script, so `ownsScript` and `ownedSessionScriptId` in
+`src/lib/store.ts` are the only two gates.
+
+`src/proxy.ts` attaches Clerk's context and deliberately decides nothing —
+Core 3 deprecated `createRouteMatcher` because path matching can diverge from
+how Next actually routes and leave resources reachable. Next 16 also renamed
+this file convention from `middleware` to `proxy`.
+
+Scripts created before auth have `user_id = NULL` and belong to nobody. That's
+deliberate: handing them to whoever signs in first would be the wrong default.
+Claim them with a direct UPDATE if you want them back.
+
+| Variable | |
+|---|---|
+| `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY` | from `npx clerk env pull` |
+| `CLERK_SECRET_KEY` | same |
+
 ## Storage modes
 
 The database and the audio store are each behind an interface, chosen from the

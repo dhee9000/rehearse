@@ -17,6 +17,7 @@ const str = (v: unknown) => (v == null ? null : String(v));
 const num = (v: unknown) => Number(v ?? 0);
 
 export async function createScript(input: {
+  userId: string;
   title: string;
   sourceName: string;
   sourceKind: string;
@@ -24,10 +25,11 @@ export async function createScript(input: {
 }): Promise<string> {
   const scriptId = id("scr");
   await (await db()).run(
-    `INSERT INTO scripts (id, title, source_name, source_kind, raw_text, parse_status, created_at)
-     VALUES (?, ?, ?, ?, ?, 'pending', ?)`,
+    `INSERT INTO scripts (id, user_id, title, source_name, source_kind, raw_text, parse_status, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)`,
     [
       scriptId,
+      input.userId,
       input.title,
       input.sourceName,
       input.sourceKind,
@@ -36,6 +38,36 @@ export async function createScript(input: {
     ],
   );
   return scriptId;
+}
+
+/**
+ * Ownership is checked in SQL at every entry point rather than trusted from a
+ * URL. Sessions, turns, characters and clips all hang off a script, so this
+ * and ownsSession are the only two gates needed.
+ */
+export async function ownsScript(
+  scriptId: string,
+  userId: string,
+): Promise<boolean> {
+  const row = await (await db()).get(
+    `SELECT 1 AS ok FROM scripts WHERE id = ? AND user_id = ?`,
+    [scriptId, userId],
+  );
+  return Boolean(row);
+}
+
+/** The owned script behind a session, or null if it isn't theirs. */
+export async function ownedSessionScriptId(
+  sessionId: string,
+  userId: string,
+): Promise<string | null> {
+  const row = await (await db()).get(
+    `SELECT s.script_id AS script_id FROM sessions s
+     JOIN scripts c ON c.id = s.script_id
+     WHERE s.id = ? AND c.user_id = ?`,
+    [sessionId, userId],
+  );
+  return row ? String(row.script_id) : null;
 }
 
 export async function getRawText(scriptId: string): Promise<string | null> {
@@ -171,12 +203,12 @@ export async function getScriptBundle(
   };
 }
 
-export async function recentScripts(limit = 6) {
+export async function recentScripts(userId: string, limit = 6) {
   const rows = await (await db()).all(
     `SELECT s.id, s.title, s.parse_status, s.created_at,
             (SELECT COUNT(*) FROM characters c WHERE c.script_id = s.id) AS parts
-     FROM scripts s ORDER BY s.created_at DESC LIMIT ?`,
-    [limit],
+     FROM scripts s WHERE s.user_id = ? ORDER BY s.created_at DESC LIMIT ?`,
+    [userId, limit],
   );
   return rows.map((r) => ({
     id: String(r.id),

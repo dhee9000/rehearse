@@ -1,9 +1,11 @@
 import { NextResponse } from "next/server";
 import { parseScript } from "@/lib/parse";
+import { currentUserId } from "@/lib/session-user";
 import {
   ensureSession,
   getRawText,
   getScriptBundle,
+  ownsScript,
   saveBreakdown,
   setParseStatus,
 } from "@/lib/store";
@@ -16,6 +18,14 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
+  const userId = await currentUserId();
+  if (!userId) {
+    return NextResponse.json({ error: "Sign in first." }, { status: 401 });
+  }
+  if (!(await ownsScript(id, userId))) {
+    return NextResponse.json({ error: "No such script." }, { status: 404 });
+  }
+
   const rawText = await getRawText(id);
   if (!rawText) {
     return NextResponse.json({ error: "No such script." }, { status: 404 });

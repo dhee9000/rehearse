@@ -1,6 +1,9 @@
 import Link from "next/link";
+import { Show, SignUpButton } from "@clerk/nextjs";
 import { Intake } from "@/components/Intake";
+import { AuthControls } from "@/components/AuthControls";
 import { Slate, Wordmark } from "@/components/ui";
+import { currentUserId } from "@/lib/session-user";
 import { recentScripts } from "@/lib/store";
 
 export const dynamic = "force-dynamic";
@@ -15,7 +18,9 @@ const SPECIMEN = [
 ];
 
 export default async function Home() {
-  const recents = await recentScripts();
+  // The pitch is public; anything belonging to a person is not.
+  const userId = await currentUserId();
+  const recents = userId ? await recentScripts(userId) : [];
 
   return (
     <main className="grain relative min-h-dvh overflow-hidden">
@@ -26,7 +31,7 @@ export default async function Home() {
 
       <header className="relative mx-auto flex max-w-7xl items-center justify-between px-6 py-7 lg:px-12">
         <Wordmark />
-        <Slate className="text-muted">Self-tape prep</Slate>
+        <AuthControls />
       </header>
 
       <div className="relative mx-auto grid max-w-7xl gap-16 px-6 pb-24 pt-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,0.86fr)] lg:gap-20 lg:px-12 lg:pt-10">
@@ -44,7 +49,22 @@ export default async function Home() {
           </p>
 
           <div className="mt-11">
-            <Intake />
+            <Show when="signed-in">
+              <Intake />
+            </Show>
+            <Show when="signed-out">
+              <div className="rounded-page border border-stage-700 bg-stage-800/70 p-6 backdrop-blur-sm">
+                <p className="text-[0.9375rem] leading-relaxed text-muted">
+                  Your sides, your parts, and the voices you cast stay on your
+                  own account.
+                </p>
+                <SignUpButton mode="modal">
+                  <button className="slate mt-5 rounded-page bg-marker px-5 py-3 text-ink transition-colors hover:bg-[#ffc736]">
+                    Start a script
+                  </button>
+                </SignUpButton>
+              </div>
+            </Show>
           </div>
 
           {recents.length > 0 && (
@@ -120,7 +140,8 @@ export default async function Home() {
 
       <footer className="relative mx-auto max-w-7xl px-6 pb-10 lg:px-12">
         <p className="text-[0.8125rem] text-faint">
-          Scripts stay on this machine. Voices are rendered once and cached.
+          Your scripts are private to your account. Voices are rendered once
+          and cached.
         </p>
       </footer>
     </main>

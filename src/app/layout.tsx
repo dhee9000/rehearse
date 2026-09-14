@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import { Archivo, Courier_Prime, Instrument_Sans } from "next/font/google";
+import { ClerkProvider } from "@clerk/nextjs";
 import "./globals.css";
 
 const archivo = Archivo({
@@ -35,6 +36,29 @@ export const viewport: Viewport = {
   initialScale: 1,
 };
 
+/** Clerk's chrome, dressed in the app's own materials rather than its defaults. */
+const clerkAppearance = {
+  variables: {
+    colorPrimary: "#f2b705",
+    colorBackground: "#11151b",
+    colorText: "#f2ead9",
+    colorTextSecondary: "#98a5b4",
+    colorInputBackground: "#1a222c",
+    colorInputText: "#f2ead9",
+    colorDanger: "#ff4d42",
+    colorNeutral: "#98a5b4",
+    fontFamily: "var(--font-instrument), ui-sans-serif, system-ui, sans-serif",
+    borderRadius: "2px",
+  },
+  elements: {
+    formButtonPrimary:
+      "bg-marker text-ink hover:bg-[#ffc736] normal-case tracking-[0.16em] uppercase text-[0.6875rem] font-semibold",
+    card: "bg-stage-800 border border-stage-700 shadow-[0_28px_70px_-34px_rgba(0,0,0,0.85)]",
+    headerTitle: "text-paper",
+    headerSubtitle: "text-muted",
+  },
+} as const;
+
 export default function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
@@ -43,7 +67,7 @@ export default function RootLayout({
       <body
         className={`${archivo.variable} ${instrument.variable} ${courierPrime.variable} antialiased`}
       >
-        {children}
+        <ClerkProvider appearance={clerkAppearance}>{children}</ClerkProvider>
       </body>
     </html>
   );

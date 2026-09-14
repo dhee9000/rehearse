@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { UserButton } from "@clerk/nextjs";
 import { MicCheck } from "./MicCheck";
 import { Sides } from "./Sides";
 import { Button, ButtonLink, Slate, Wordmark } from "./ui";
@@ -69,11 +70,18 @@ export function Setup({
           <p className="min-w-0 flex-1 truncate text-center text-[0.9375rem] text-muted">
             {script.title}
           </p>
-          <Slate className="shrink-0 text-faint">
-            {script.parseStatus === "ready"
-              ? `${script.characters.length} parts`
-              : "Not broken down"}
-          </Slate>
+          <span className="flex shrink-0 items-center gap-3">
+            <Slate className="text-faint">
+              {script.parseStatus === "ready"
+                ? `${script.characters.length} parts`
+                : "Not broken down"}
+            </Slate>
+            <UserButton
+              appearance={{
+                elements: { avatarBox: "h-7 w-7 rounded-full ring-1 ring-stage-600" },
+              }}
+            />
+          </span>
         </div>
       </header>
 
